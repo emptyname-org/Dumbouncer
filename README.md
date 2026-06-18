@@ -5,7 +5,7 @@ the endpoint without running anything. Humans and intelligent agents both get
 through, because both can solve the proof. It does not stop an attacker who runs
 the solver; it imposes a per-message CPU cost.
 
-The proof of work is hashcash, the same scheme as Bitcoin mining: find a nonce
+The proof of work is hashcash, the scheme used for Bitcoin mining: find a nonce
 whose SHA-256 hash is below a target. The browser solves it automatically; the
 server verifies in one hash.
 
