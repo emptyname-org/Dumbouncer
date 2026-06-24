@@ -2,7 +2,7 @@
 
 **Dumb bots bounce.**
 
-## An intelligent-agent-friendly, proof-of-work spam gate for contact forms
+## An AI friendly POW spam gate for contact forms
 
 Every sender must solve a configurable hashcash challenge before a message is accepted:
 
