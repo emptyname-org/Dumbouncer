@@ -1,9 +1,9 @@
-/* Dumbouncer - browser solver for the hashcash proof-of-work, challenge-on-submit.
-   Flow: POST the form. If the server replies with a JSON challenge
-   {challenge, sig, target}, search for an integer nonce such that the first
-   4 bytes of SHA-256(challenge + ":" + nonce), as a big-endian integer, are
-   <= target; then re-POST with challenge,sig unchanged plus the nonce. The
-   visitor just presses Send; the search runs in the browser. No library. */
+/* Dumbouncer - browser solver, challenge-on-submit. On submit this POSTs the
+   plain contact form; if the server replies with a prose challenge (a token, a
+   seal and a limit embedded in a sentence), it finds a number whose
+   SHA-256(token + ":" + number) starts below the limit, then re-POSTs with the
+   answer in fields a (token), b (seal), c (number). The visitor just presses
+   Send; the search runs in the browser. No library. */
 (function () {
   "use strict";
   var form = document.getElementById("form");
@@ -81,18 +81,38 @@
     if (reset) form.reset();   /* clear the fields, but keep the status message on screen */
   }
 
-  /* search for a nonce, fill hidden fields, then cb() */
+  /* Pull the two hex values and the limit out of the prose challenge by SHAPE,
+     not by label: the token is <16 hex>:<10 digits>, the seal is the 64-hex
+     string, the limit is the number after "less than". Returns null when the
+     response is not a challenge (e.g. a final status code like "1"). */
+  function parseChallenge(txt) {
+    var token = (txt.match(/[0-9a-f]{16}:[0-9]{10}/i) || [])[0];
+    var seal  = (txt.match(/[0-9a-f]{64}/i) || [])[0];
+    var lim   = txt.match(/less than\s+([0-9]+)/i);
+    if (!token || !seal || !lim) return null;
+    return { token: token, seal: seal, limit: parseInt(lim[1], 10) };
+  }
+
+  /* set a hidden field's value, creating it if the form doesn't have it - so the
+     page markup carries no proof fields, only the visible ones */
+  function setField(name, value) {
+    var el = form.elements[name];
+    if (!el) { el = document.createElement("input"); el.type = "hidden"; el.name = name; form.appendChild(el); }
+    el.value = value;
+  }
+
+  /* search for the number, fill the resubmit fields a/b/c, then cb() */
   function solve(ch, cb) {
-    var target = ch.target >>> 0;
-    var prefix = ch.challenge + ":";
+    var limit = ch.limit >>> 0;
+    var prefix = ch.token + ":";
     var nonce = 0;
     (function chunk() {
       var end = nonce + 5000;
       for (; nonce < end; nonce++) {
-        if (sha256_first32(prefix + nonce) <= target) {
-          form.challenge.value = ch.challenge;
-          form.sig.value = ch.sig;
-          form.nonce.value = nonce;
+        if (sha256_first32(prefix + nonce) < limit) {
+          setField("a", ch.token);
+          setField("b", ch.seal);
+          setField("c", nonce);
           cb(); return;
         }
       }
@@ -107,8 +127,7 @@
     xhr.onload = function () {
       if (xhr.status !== 200) { done("Something went wrong", "orange"); return; }
       var txt = (xhr.responseText || "").trim();
-      var ch = null;
-      try { var j = JSON.parse(txt); if (j && j.need_proof) ch = j; } catch (e) {}
+      var ch = parseChallenge(txt);
       if (ch) {
         if (!allowSolve) { done("Failed to send - please retry", "orange"); return; }
         solve(ch, function () { post(false); });
@@ -131,6 +150,7 @@
     }
     busy = true; form.classList.add("disabled");
     startDots("Sending", "#0a0");
+    setField("j", "1");   // marks the browser path in the log; an agent following the prose omits it
     post(true);
   });
 })();

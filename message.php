@@ -10,22 +10,20 @@
  * point the form's `action` at it. The HMAC secret is generated automatically on
  * the first request (see pow_secret()). Nothing else is required.
  *
- * Protocol (no JavaScript required - the form's `action` is the only thing a
- * client must discover):
+ * Protocol (no JavaScript required):
  *   - A client POSTs the form.
- *   - If there is no valid proof yet, the server replies HTTP 200 with a JSON
- *     CHALLENGE that states exactly what to compute:
- *         { "need_proof":true, "scheme":"hashcash-sha256",
- *           "formula":"find an integer nonce so the first 4 bytes of
- *                      SHA-256(challenge + \":\" + nonce), big-endian, are <= target",
- *           "howto":"...", "challenge":"<hex:unixtime>", "sig":"<hmac>",
- *           "target":<int>, "bits":<int> }
- *   - The client searches for such a nonce and re-POSTs the same fields plus
- *     challenge, sig (unchanged) and nonce.  Verification is one SHA-256.
+ *   - With no valid proof yet, the server replies HTTP 200 with a plain-text
+ *     CHALLENGE written as prose, values inline, with NO machine labels:
+ *       "...find a whole number such that the SHA-256 of <token>:number begins
+ *        with four bytes that, big-endian, are less than <limit>. ...re-submit
+ *        with a = <token>, b = <seal>, c = the number you found."
+ *   - The client finds the number and re-POSTs the form plus a, b, c.
+ *     The server reads challenge=a, sig=b, nonce=c; verification is one SHA-256.
  *
- * A blind bot that ignores the challenge never sends a valid nonce -> rejected.
- * An honest client (browser via script.js, or any automated client that reads
- * the challenge) does the work and gets through.  See README.md.
+ * A blind bot that ignores the challenge sends no valid number -> rejected.
+ * The prose carries no "hashcash"/scheme/challenge/sig/target tells, so generic
+ * solvers that key on the standard schema do not recognise it; a browser (via
+ * script.js) or an automated client that READS the prose gets through.
  *
  * Final status codes (plain text, read by script.js):
  *   1 sent · 2 send-failed/misconfigured · 3 invalid email · 4 missing field
@@ -72,6 +70,9 @@ function logrec($code, $reason) {
     'ip'     => $_SERVER['REMOTE_ADDR'] ?? '',
     'code'   => $code,
     'reason' => $reason,
+    // human = our script.js ran (it stamps j); agent = a client that followed the
+    // prose, which never mentions j. A clean "did our JS run" signal, no headers.
+    'route'  => empty($_POST['j']) ? 'agent' : 'human',
     'name'   => substr(pval('name'), 0, 120),
     'email'  => substr(pval('email'), 0, 200),
     'ua'     => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 200),
@@ -80,36 +81,33 @@ function logrec($code, $reason) {
 }
 function finish($code, $reason = '') { logrec($code, $reason); echo $code; exit; }
 
-function challenge_json() {
+function challenge_text() {
   $p = pow_issue();
-  if ($p === null) { http_response_code(500); echo '{"error":"misconfigured: no secret"}'; exit; }
-  $p['scheme']  = 'hashcash-sha256';
-  $p['formula'] = 'find an integer nonce so that the first 4 bytes of '
-                . 'SHA-256(challenge + ":" + nonce), read as a big-endian integer, are <= target';
-  return $p;
-}
-
-// Optional machine endpoint: GET ?puzzle returns a challenge as JSON.
-if (isset($_GET['puzzle'])) {
-  header('Content-Type: application/json'); header('Cache-Control: no-store');
-  echo json_encode(challenge_json(), JSON_UNESCAPED_SLASHES);
-  exit;
+  if ($p === null) { http_response_code(500); echo 'misconfigured: no secret'; exit; }
+  $token = $p['challenge'];
+  $seal  = $p['sig'];
+  $limit = $p['target'] + 1;   // "less than $limit" == "<= target" for an integer
+  // Plain-language puzzle, values inline, with NO machine labels (no scheme /
+  // challenge / sig / target keys). Off-the-shelf hashcash solvers key on that
+  // standard schema, so they no longer recognise this as a proof-of-work gate.
+  // script.js lifts the two hex values + the limit by shape; an automated client
+  // reads the sentence.
+  return 'To send this message find a whole number such that the SHA-256 of '
+       . $token . ':number begins with four bytes that, read as a big-endian integer, '
+       . 'are less than ' . $limit . '. Then re-submit your message with three added '
+       . 'fields - a = ' . $token . ', b = ' . $seal . ', c = the number you found.';
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') { http_response_code(405); header('Allow: POST'); exit; }
 
-// challenge-response: no valid proof (or a replayed one) -> hand back a fresh challenge.
+// The proof of work travels in opaque fields: a (token), b (seal), c (number).
+// No valid proof (or a replayed one) -> hand back a fresh prose challenge.
 // pow_verify() checks the signature, freshness and the hash, then pow_spend()
 // enforces single use so a solved proof cannot be replayed within the window.
-if (!pow_verify(pval('challenge'), pval('sig'), pval('nonce')) || !pow_spend(pval('challenge'))) {
-  header('Content-Type: application/json'); header('Cache-Control: no-store');
-  $p = challenge_json();
-  $p['need_proof'] = true;
-  $p['howto']      = 'Find nonce per "formula", then re-POST this form (name,email,message) '
-                   . 'with challenge and sig unchanged plus your nonce. This challenge is valid '
-                   . 'until "expires_at" (unix seconds); reuse it until then, after which request a new one.';
+if (!pow_verify(pval('a'), pval('b'), pval('c')) || !pow_spend(pval('a'))) {
+  header('Content-Type: text/plain; charset=utf-8'); header('Cache-Control: no-store');
   logrec('c', 'challenge-issued');
-  echo json_encode($p, JSON_UNESCAPED_SLASHES);
+  echo challenge_text();
   exit;
 }
 
@@ -177,16 +175,11 @@ function pow_sign($challenge, $key) { return hash_hmac('sha256', $challenge, $ke
 function pow_issue() {
   $key = pow_secret();
   if ($key === '') return null;
-  $now = time();
-  $challenge = bin2hex(random_bytes(8)) . ':' . $now;   // random : unix-time
+  $challenge = bin2hex(random_bytes(8)) . ':' . time();   // random : unix-time (freshness)
   return array(
-    'challenge'  => $challenge,
-    'sig'        => pow_sign($challenge, $key),
-    'target'     => pow_target(),
-    'bits'       => POW_BITS,
-    'issued_at'  => $now,
-    'expires_at' => $now + POW_WINDOW,
-    'ttl'        => POW_WINDOW,
+    'challenge' => $challenge,
+    'sig'       => pow_sign($challenge, $key),
+    'target'    => pow_target(),
   );
 }
 

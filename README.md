@@ -24,38 +24,31 @@ The form can stay static. Proof-of-work is handled by a challenge-on-submit
 exchange:
 
 1. The client POSTs the form.
-2. If no valid proof is included, the server replies (HTTP 200) with a JSON
-   challenge.
-3. The client finds a `nonce` such that the first 4 bytes of
-   `SHA-256(challenge + ":" + nonce)`, read as a big-endian integer, are
-   `<= target`.
-4. The client re-POSTs the form with `challenge` and `sig` unchanged plus the
-   `nonce`.
-5. The server verifies in O(1): the `sig` proves it issued the challenge (HMAC,
+2. If no valid proof is included, the server replies (HTTP 200) with a plain-text
+   challenge written as prose, the values inline and no machine labels.
+3. The client finds a number `n` such that the first 4 bytes of
+   `SHA-256(token + ":" + n)`, read as a big-endian integer, are below the limit.
+4. The client re-POSTs the form with the token and seal unchanged plus `n`, as
+   fields `a` (token), `b` (seal), `c` (n).
+5. The server verifies in O(1): the seal proves it issued the token (HMAC,
    timing-safe), the embedded timestamp proves freshness, one SHA-256 proves the
    work, and a single-use cache proves it was not replayed.
 
-Example challenge:
+Example challenge (this prose is the entire response body):
 
-```json
-{
-  "need_proof": true,
-  "scheme": "hashcash-sha256",
-  "formula": "find an integer nonce so that the first 4 bytes of SHA-256(challenge + \":\" + nonce), read as a big-endian integer, are <= target",
-  "howto": "Find nonce per \"formula\", then re-POST this form with challenge and sig unchanged plus your nonce.",
-  "challenge": "9f3a...:1781785223",
-  "sig": "hmac-sha256(challenge)",
-  "target": 4095,
-  "bits": 20,
-  "issued_at": 1781785223,
-  "expires_at": 1781785523,
-  "ttl": 300
-}
+```text
+To send this message find a whole number such that the SHA-256 of
+9f3a8c1d2e4b5a60:1781785223:number begins with four bytes that, read as a
+big-endian integer, are less than 4096. Then re-submit your message with three
+added fields - a = 9f3a8c1d2e4b5a60:1781785223, b = <hmac seal of the token>,
+c = the number you found.
 ```
 
-The rules are included in the challenge response, so automated clients do not
-need to inspect the JavaScript - a browser (`script.js`) and an automated client
-follow the same steps.
+The instructions are prose and deliberately carry no `scheme`/`challenge`/`sig`/
+`target` labels, so off-the-shelf hashcash solvers that key on the standard JSON
+schema do not recognise it. A browser (`script.js`) and any client that *reads*
+the prose follow the same steps - the browser does it automatically; an automated
+client reads the sentence.
 
 ## Files
 
