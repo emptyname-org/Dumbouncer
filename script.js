@@ -3,7 +3,10 @@
    seal and a limit embedded in a sentence), it finds a number whose
    SHA-256(token + ":" + number) starts below the limit, then re-POSTs with the
    answer in fields a (token), b (seal), c (number). The visitor just presses
-   Send; the search runs in the browser. No library. */
+   Send; the search runs in the browser. No library.
+
+   This is the readable source. The page loads the minified build, script.min.js;
+   regenerate it after editing here: npx terser script.js -c -m -o script.min.js */
 (function () {
   "use strict";
   var form = document.getElementById("form");

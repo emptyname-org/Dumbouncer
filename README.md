@@ -65,11 +65,7 @@ and configuration all live in the same file, so there is no other PHP to
 include.
 
 Ship the minified solver, not the commented source - it avoids handing a reader
-the whole protocol. Rebuild it after editing `script.js`:
-
-```sh
-npx terser script.js -c -m -o script.min.js
-```
+the whole protocol.
 
 ## Install
 
